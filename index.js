@@ -1,241 +1,371 @@
-// ========================
-// IMPORTS
-// ========================
 const {
   Client,
   GatewayIntentBits,
   ChannelType,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  SlashCommandBuilder,
+  Routes
 } = require("discord.js");
-
+const { REST } = require("@discordjs/rest");
 const express = require("express");
 
 // ========================
-// CORE CONFIG (Nomads)
+// ENV (matches your Render keys)
 // ========================
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN; // required
-const BUSINESS_NAME = "Nomads";
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const BUSINESS_NAME = process.env.BUSINESS_NAME || "Your Business";
+const GUILD_ID = process.env.GUILD_ID;
 
-const GUILD_ID = "1440504953335578746";
-const INVITE_TARGET_CHANNEL_ID = "1442209053374808157";
-const START_HERE_CHANNEL_ID = "1442229060922114178";
+const INVITE_TARGET_CHANNEL_ID = process.env.INVITE_TARGET_CHANNEL_ID;
+const INVITE_REQUEST_CHANNEL_ID = process.env.INVITE_REQUEST_CHANNEL_ID;
+const START_HERE_CHANNEL_ID = process.env.START_HERE_CHANNEL_ID || null;
 
-// Optional staff role that can see all client categories
-const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || null;
+const ZAPIER_WEBHOOK_URL = process.env.ZAPIER_WEBHOOK_URL || null;
 
-// Team members (specific people)
-const FOUNDER_USER_IDS = ["1442209530015387759"];
-const CSM_USER_IDS = ["1442210243097399386"];
-const OPERATIONS_USER_ID = "1450124907269722124";
+// Staff roles: supports ONE or MANY (comma-separated)
+const STAFF_ROLE_IDS = (process.env.STAFF_ROLE_IDS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
-// Optional (not provided)
-const FULFILMENT_USER_ID = null;
+// Team mentions (matches your keys)
+const FOUNDER_USER_ID = process.env.FOUNDER_USER_ID || null; // single
+const CSM_USER_IDS = (process.env.CSM_USER_IDS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
-// Email on join disabled for this build
-const ZAPIER_WEBHOOK_URL = null;
+const OPERATIONS_USER_ID = process.env.OPERATIONS_USER_ID || null; // single
+
+// Basic checks
+if (!DISCORD_TOKEN) throw new Error("Missing DISCORD_TOKEN");
+if (!GUILD_ID) throw new Error("Missing GUILD_ID");
+if (!INVITE_TARGET_CHANNEL_ID) throw new Error("Missing INVITE_TARGET_CHANNEL_ID");
+if (!INVITE_REQUEST_CHANNEL_ID) throw new Error("Missing INVITE_REQUEST_CHANNEL_ID");
 
 // ========================
-// EXPRESS SERVER (INVITE MAP)
+// EXPRESS (health check)
 // ========================
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-
-// inviteCode → firstname
-const inviteMap = new Map();
-
-app.get("/", (req, res) => {
-  res.send(`${BUSINESS_NAME} Discord Bot is running.`);
-});
-
-// Zapier posts inviteCode + firstname here
-app.post("/invite-map", (req, res) => {
-  const { inviteCode, firstname } = req.body;
-
-  if (!inviteCode || !firstname) {
-    return res.status(400).send("inviteCode and firstname required");
-  }
-
-  inviteMap.set(inviteCode, firstname.trim());
-  console.log(`Mapped ${inviteCode} → ${firstname.trim()}`);
-
-  return res.send("ok");
-});
-
-app.listen(PORT, () => {
-  console.log("HTTP server listening on port " + PORT);
-});
+app.get("/", (req, res) => res.send(`${BUSINESS_NAME} bot running`));
+app.listen(process.env.PORT || 3000, () => console.log("HTTP server listening"));
 
 // ========================
-// DISCORD BOT SETUP
+// BOT
 // ========================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildInvites
-  ]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildInvites]
 });
 
+// inviteCode -> firstname (in-memory)
+const inviteMap = new Map();
+// invite usage cache
 const inviteUses = new Map();
 
 // ========================
 // HELPERS
 // ========================
-function mentionUsers(userIds, fallbackText) {
-  if (!userIds || userIds.length === 0) return fallbackText;
-  return userIds.map(id => `<@${id}>`).join(" & ");
-}
-
 function mentionUser(userId, fallbackText) {
   if (!userId) return fallbackText;
   return `<@${userId}>`;
 }
-
+function mentionUsers(userIds, fallbackText) {
+  if (!userIds || userIds.length === 0) return fallbackText;
+  return userIds.map(id => `<@${id}>`).join(" & ");
+}
 function mentionChannel(channelId, fallbackText) {
   if (!channelId) return fallbackText;
   return `<#${channelId}>`;
 }
-
-function slugifyName(input) {
-  return input
+function slugify(input) {
+  return (input || "")
     .toLowerCase()
     .trim()
     .replace(/\s+/g, "-")
     .replace(/[^a-z0-9\-]/g, "")
-    .slice(0, 40); // keep channel names safe
+    .slice(0, 40);
+}
+function businessSlug() {
+  // "Nomads" -> "nomads"
+  return slugify(BUSINESS_NAME) || "business";
+}
+function isStaff(member) {
+  // If no staff roles set, allow anyone (not recommended)
+  if (!STAFF_ROLE_IDS.length) return true;
+  return STAFF_ROLE_IDS.some(rid => member.roles.cache.has(rid));
 }
 
 // ========================
-// READY EVENT
+// REGISTER SLASH COMMAND
+// ========================
+async function registerCommands() {
+  const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
+
+  const commands = [
+    new SlashCommandBuilder()
+      .setName("newclient")
+      .setDescription("Generate a 1-use invite for a new client and map it to their firstname.")
+      .addStringOption(opt =>
+        opt
+          .setName("firstname")
+          .setDescription("Client firstname (used for category/channels)")
+          .setRequired(true)
+      )
+      .toJSON()
+  ];
+
+  await rest.put(Routes.applicationGuildCommands(client.user.id, GUILD_ID), { body: commands });
+  console.log("✅ Slash command registered: /newclient");
+}
+
+// ========================
+// READY
 // ========================
 client.on("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
+  const guild = await client.guilds.fetch(GUILD_ID);
+
+  // Cache invites (needs Manage Server / Manage Guild OR specific invite perms)
   try {
-    const guild = await client.guilds.fetch(GUILD_ID);
     const invites = await guild.invites.fetch();
     invites.forEach(inv => inviteUses.set(inv.code, inv.uses));
     console.log("Cached existing invites.");
   } catch (err) {
     console.error("Error caching invites:", err);
   }
+
+  // Register slash command
+  await registerCommands();
+
+  // Post the button in the request channel
+  try {
+    const requestChannel = await guild.channels.fetch(INVITE_REQUEST_CHANNEL_ID);
+    if (requestChannel && requestChannel.isTextBased()) {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("gen_invite_btn")
+          .setLabel("Generate New Client Invite")
+          .setStyle(ButtonStyle.Primary)
+      );
+
+      await requestChannel.send({
+        content: "Click to generate a 1-use invite for a new client (firstname mapping included).",
+        components: [row]
+      });
+    }
+  } catch (err) {
+    console.error("Error posting invite button:", err);
+  }
 });
 
 // ========================
-// MEMBER JOIN EVENT
+// INTERACTIONS (slash + button + modal)
+// ========================
+client.on("interactionCreate", async (interaction) => {
+  try {
+    if (!interaction.inGuild()) {
+      return interaction.reply({ content: "Use this inside the server.", ephemeral: true });
+    }
+
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const member = await guild.members.fetch(interaction.user.id);
+
+    if (!isStaff(member)) {
+      return interaction.reply({ content: "You don’t have permission to do that.", ephemeral: true });
+    }
+
+    // Slash command: /newclient firstname:...
+    if (interaction.isChatInputCommand() && interaction.commandName === "newclient") {
+      const firstname = interaction.options.getString("firstname", true).trim();
+      const inviteUrl = await createMappedInvite(firstname);
+      return interaction.reply({ content: `✅ Invite for **${firstname}**:\n${inviteUrl}`, ephemeral: true });
+    }
+
+    // Button: open modal
+    if (interaction.isButton() && interaction.customId === "gen_invite_btn") {
+      const modal = new ModalBuilder()
+        .setCustomId("gen_invite_modal")
+        .setTitle("New Client Invite");
+
+      const input = new TextInputBuilder()
+        .setCustomId("firstname_input")
+        .setLabel("Client firstname")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+      return interaction.showModal(modal);
+    }
+
+    // Modal submit: generate invite
+    if (interaction.isModalSubmit() && interaction.customId === "gen_invite_modal") {
+      const firstname = interaction.fields.getTextInputValue("firstname_input").trim();
+      const inviteUrl = await createMappedInvite(firstname);
+      return interaction.reply({ content: `✅ Invite for **${firstname}**:\n${inviteUrl}`, ephemeral: true });
+    }
+  } catch (err) {
+    console.error("interactionCreate error:", err);
+    try {
+      if (!interaction.replied) {
+        await interaction.reply({ content: "Something went wrong.", ephemeral: true });
+      }
+    } catch {}
+  }
+});
+
+// ========================
+// CREATE INVITE + MAP firstname
+// ========================
+async function createMappedInvite(firstnameRaw) {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const inviteChannel = await guild.channels.fetch(INVITE_TARGET_CHANNEL_ID);
+
+  if (!inviteChannel || !inviteChannel.isTextBased()) {
+    throw new Error("Invite target channel not found or not text-based.");
+  }
+
+  const firstname = firstnameRaw.trim();
+
+  // Create 1-use invite
+  const invite = await inviteChannel.createInvite({
+    maxUses: 1,
+    maxAge: 0,
+    unique: true
+  });
+
+  inviteMap.set(invite.code, firstname);
+  console.log(`Mapped (internal) ${invite.code} → ${firstname}`);
+
+  return `https://discord.gg/${invite.code}`;
+}
+
+// ========================
+// ON JOIN: create category/channels + onboarding message
 // ========================
 client.on("guildMemberAdd", async (member) => {
   try {
     const guild = member.guild;
 
-    // Fetch invites (we’ll find the one that incremented)
     const newInvites = await guild.invites.fetch();
-
     let usedInvite = null;
+
     newInvites.forEach(inv => {
       const prev = inviteUses.get(inv.code) || 0;
       if (inv.uses > prev) usedInvite = inv;
       inviteUses.set(inv.code, inv.uses);
     });
 
-    // Resolve firstname from invite map (Option A)
-    let firstname;
+    let firstname = "Client";
     if (usedInvite) {
-      firstname = inviteMap.get(usedInvite.code);
-      if (!firstname) {
-        console.log(`⚠ No firstname mapped for invite ${usedInvite.code}, falling back.`);
-        firstname = member.displayName || member.user.username || "Client";
-      } else {
-        console.log(`Invite ${usedInvite.code} matched to firstname: ${firstname}`);
-      }
+      firstname =
+        inviteMap.get(usedInvite.code) ||
+        member.displayName ||
+        member.user.username ||
+        "Client";
+      console.log(`Join matched invite ${usedInvite.code} → firstname: ${firstname}`);
     } else {
-      console.log(`⚠ No used invite found for ${member.user.tag}, falling back.`);
+      console.log(`⚠ No invite match for ${member.user.tag}, fallback name used.`);
       firstname = member.displayName || member.user.username || "Client";
     }
 
     firstname = firstname.trim();
+
+    // CATEGORY_FORMAT: Firstname - Business
     const categoryName = `${firstname} - ${BUSINESS_NAME}`;
 
-    console.log(`Creating Nomads category/channels for: ${firstname}`);
-
-    // ========================
-    // CREATE CATEGORY
-    // ========================
+    // Create category
     const category = await guild.channels.create({
       name: categoryName,
       type: ChannelType.GuildCategory
     });
 
-    // Permissions
+    // Permission overwrites
     const overwrites = [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.ViewChannel]
-      },
-      {
-        id: member.id,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
-      },
-      {
-        id: client.user.id,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
-      }
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] },
+      { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
     ];
 
-    if (STAFF_ROLE_ID) {
+    // allow staff roles (supports many)
+    for (const rid of STAFF_ROLE_IDS) {
       overwrites.push({
-        id: STAFF_ROLE_ID,
+        id: rid,
         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
       });
     }
 
     await category.permissionOverwrites.set(overwrites);
 
-    // ========================
-    // CREATE CHANNELS (only 1, personalised)
-    // ========================
-    const personalised = slugifyName(firstname);
-    const channelName = `🤝│nomads-${personalised}`;
-
+    // Create the personalised channel: 🤝│nomads-name -> 🤝│nomads-firstname
+    const channelName = `🤝│${businessSlug()}-${slugify(firstname)}`;
     const teamChatChannel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildText,
       parent: category.id
     });
 
-    // ========================
-    // SEND ONBOARDING MESSAGE (one message)
-    // ========================
+    // Welcome message (simple + tags)
     const newMemberMention = `<@${member.id}>`;
-    const founders = mentionUsers(FOUNDER_USER_IDS, "Founder");
-    const csms = mentionUsers(CSM_USER_IDS, "CSM");
+    const founder = mentionUser(FOUNDER_USER_ID, "Founder");
+    const csms = mentionUsers(CSM_USER_IDS, "Client Success");
     const ops = mentionUser(OPERATIONS_USER_ID, "Operations");
     const startHere = mentionChannel(START_HERE_CHANNEL_ID, "#start-here");
 
-    const message = `
+    const msg = `
 ✨ **Welcome to ${BUSINESS_NAME}!**
 
-Hey ${newMemberMention}, welcome aboard.
+Hey ${newMemberMention}, we’re genuinely excited to have you here.
 
-👥 **Your Team**
-${founders} – **Founder**  
-${csms} – **Client Success**  
-${ops} – **Operations**
+👥 **Meet Your Team**
+${founder} – **Founder**  
+${csms} – **Client Success Managers**  
+${ops} – **Operations Manager**
 
-**Next step:** Head over to ${startHere} to complete your intake form.
+**Next step:** Head over to ${startHere} and complete your intake form.
     `.trim();
 
-    await teamChatChannel.send(message);
+    await teamChatChannel.send(msg);
+
+    // Optional: notify Zapier webhook
+    if (ZAPIER_WEBHOOK_URL) {
+      try {
+        const payload = {
+          firstname,
+          businessName: BUSINESS_NAME,
+          discordId: member.id,
+          discordTag: `${member.user.username}#${member.user.discriminator}`,
+          categoryName,
+          joinedAt: new Date().toISOString()
+        };
+
+        await fetch(ZAPIER_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        console.log("Notified Zapier about new member join.");
+      } catch (err) {
+        console.error("Error notifying Zapier:", err);
+      }
+    }
 
     console.log(`✅ Created category + channel for ${firstname}`);
   } catch (err) {
-    console.error("Error in guildMemberAdd:", err);
+    console.error("guildMemberAdd error:", err);
   }
 });
 
 // ========================
-// LOGIN BOT
+// LOGIN
 // ========================
 client.login(DISCORD_TOKEN);
