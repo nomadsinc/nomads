@@ -373,8 +373,11 @@ client.on("guildMemberAdd", async (member) => {
 
     firstname = firstname.trim();
     const categoryName = `${firstname} - ${BUSINESS_NAME}`;
+    console.log(`Creating channels for: ${firstname}`);
 
-    // Create category
+    // ========================
+    // CREATE CATEGORY
+    // ========================
     const category = await guild.channels.create({
       name: categoryName,
       type: ChannelType.GuildCategory
@@ -397,15 +400,19 @@ client.on("guildMemberAdd", async (member) => {
 
     await category.permissionOverwrites.set(overwrites);
 
-    // Create personalised channel: 🤝│nomads-firstname
-    const channelName = `🤝│${businessSlug()}-${slugify(firstname)}`;
+    // ========================
+    // CREATE CHANNELS (your current "Nomads" template: 1 personalised channel)
+    // ========================
+    const teamChatChannelName = `🤝│${businessSlug()}-${slugify(firstname)}`;
     const teamChatChannel = await guild.channels.create({
-      name: channelName,
+      name: teamChatChannelName facilitating,
       type: ChannelType.GuildText,
       parent: category.id
     });
 
-    // Onboarding message
+    // ========================
+    // SEND ONBOARDING MESSAGE (UPDATED)
+    // ========================
     const newMemberMention = `<@${member.id}>`;
     const founder = mentionUser(FOUNDER_USER_ID, "Founder");
     const csms = mentionUsers(CSM_USER_IDS, "Client Success Managers");
@@ -413,37 +420,40 @@ client.on("guildMemberAdd", async (member) => {
     const startHere = mentionChannel(START_HERE_CHANNEL_ID, "#start-here");
 
     const msg = `
-✨ **Welcome to ${BUSINESS_NAME}!**
+**Welcome to ${BUSINESS_NAME}!**
 
-Hey ${newMemberMention}, we’re genuinely excited to have you here.
-By joining this community, you’ve partnered with a team dedicated to helping you scale your agency, coaching, or consulting business, faster, smoother, and with a lot less stress.
+Hey ${newMemberMention}, we’re excited to have you here and officially get started together.
 
-From here on out, we’ll work with you to refine your offer, build your ads and funnel, set up the right automations, and launch campaigns that actually move the needle. You’re not just working with an agency — you’ve got a real growth partner.
+By joining ${BUSINESS_NAME}, you’re partnering with a hands-on growth team focused on helping you scale your agency, coaching, or professional service businesses in a clear and repeatable way. Our goal is to remove confusion, handle execution, and give you a simple path to growth.
 
-⸻
+From here on out, we’ll work with you to refine your offer, build and launch ads and funnels, set up the right automations, and optimize everything based on real data. You’re not just hiring a service, you’re gaining a long-term growth partner.
 
-👥 **Meet Your Team**
+- - - - -
 
-${founder} – **Founder**
-Guides your strategy, offer, and overall growth direction.
+**I’d Like to Introduce You to Your Team…**
 
-${csms} – **Client Success Managers**
-Your day-to-day support. If you need clarity, direction, or help getting unstuck, they’ve got you.
+${founder} – **Founder & Strategy Lead**  
+Oversees your growth strategy, offer positioning, and overall direction to ensure everything is built to scale.
 
-${ops} – **Operations Manager**
-Keeps the entire process running smoothly so onboarding and fulfilment feel seamless.
+${csms} – **Client Success Managers**  
+Your main point of contact. They’re here to answer questions, provide clarity, guide next steps, and keep you moving forward smoothly. They will also be handling your ad creation, funnel builds, automations, tracking, and ongoing optimization behind the scenes.
 
-Creative & Tech Team
-Handles editing, building, automations, optimisation, and all behind-the-scenes execution.
+${ops} – **Operations Manager**  
+Ensures onboarding, timelines, and internal coordination run seamlessly so nothing falls through the cracks.
 
-⸻
+- - - - -
 
-You’ve now got a full team backing you.
-Ask questions anytime, drop updates as you go, and use this Discord as your direct line to us.
+**How We’ll Work Together**
 
-Next step: Head over to ${startHere} and complete your intake form — this gives us everything we need to tailor your onboarding and hit the ground running.
+This Discord is your direct line to the team. Ask questions anytime, share updates, and reach out whenever you need clarity, we’re here to support you at every step.
 
-We’re really looking forward to growing with you. 🚀
+- - - - -
+
+**Next Step...**
+
+Head to ${startHere} and complete your intake form so we can tailor your onboarding and hit the ground running.
+
+We’re excited to grow with you. Welcome aboard!
     `.trim();
 
     await teamChatChannel.send(msg);
