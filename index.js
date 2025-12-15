@@ -27,7 +27,9 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const INVITE_TARGET_CHANNEL_ID = process.env.INVITE_TARGET_CHANNEL_ID; // where client lands when joining
 const INVITE_REQUEST_CHANNEL_ID = process.env.INVITE_REQUEST_CHANNEL_ID; // where staff clicks button / uses /newclient
-const START_HERE_CHANNEL_ID = process.env.START_HERE_CHANNEL_ID || null;
+
+// ✅ replaced START_HERE_CHANNEL_ID with CURRICULUM_CHANNEL_ID
+const CURRICULUM_CHANNEL_ID = process.env.CURRICULUM_CHANNEL_ID || null;
 
 const ZAPIER_WEBHOOK_URL = process.env.ZAPIER_WEBHOOK_URL || null;
 
@@ -288,12 +290,9 @@ client.on("interactionCreate", async (interaction) => {
 
         modal.addComponents(new ActionRowBuilder().addComponents(input));
 
-        // showModal is the interaction response (must happen fast)
         return await interaction.showModal(modal);
       } catch (err) {
         console.error("Button click -> showModal failed:", err);
-
-        // Guaranteed fallback response so Discord doesn’t show "interaction failed"
         try {
           return await interaction.reply({
             content: "⚠️ Button had an issue. Use `/newclient firstname:John` instead.",
@@ -390,7 +389,6 @@ client.on("guildMemberAdd", async (member) => {
       { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
     ];
 
-    // allow staff roles (supports many)
     for (const rid of STAFF_ROLE_IDS) {
       overwrites.push({
         id: rid,
@@ -401,59 +399,66 @@ client.on("guildMemberAdd", async (member) => {
     await category.permissionOverwrites.set(overwrites);
 
     // ========================
-    // CREATE CHANNELS (your current "Nomads" template: 1 personalised channel)
+    // CREATE CHANNELS (1 personalised channel)
     // ========================
     const teamChatChannelName = `🤝│${businessSlug()}-${slugify(firstname)}`;
     const teamChatChannel = await guild.channels.create({
-      name: teamChatChannelName facilitating,
+      name: teamChatChannelName,
       type: ChannelType.GuildText,
       parent: category.id
     });
 
     // ========================
-    // SEND ONBOARDING MESSAGE (UPDATED)
+    // SEND ONBOARDING MESSAGE (UPDATED + curriculum mention)
     // ========================
     const newMemberMention = `<@${member.id}>`;
     const founder = mentionUser(FOUNDER_USER_ID, "Founder");
     const csms = mentionUsers(CSM_USER_IDS, "Client Success Managers");
     const ops = mentionUser(OPERATIONS_USER_ID, "Operations Manager");
-    const startHere = mentionChannel(START_HERE_CHANNEL_ID, "#start-here");
+    const curriculum = mentionChannel(CURRICULUM_CHANNEL_ID, "#curriculum");
 
     const msg = `
-**Welcome to ${BUSINESS_NAME}!**
+✨ **Welcome to ${BUSINESS_NAME}!**
 
 Hey ${newMemberMention}, we’re excited to have you here and officially get started together.
 
-By joining ${BUSINESS_NAME}, you’re partnering with a hands-on growth team focused on helping you scale your agency, coaching, or professional service businesses in a clear and repeatable way. Our goal is to remove confusion, handle execution, and give you a simple path to growth.
+By joining ${BUSINESS_NAME}, you’re partnering with a hands-on growth team focused on helping you scale your agency, coaching, or consulting business in a clear and repeatable way. Our goal is to remove confusion, handle execution, and give you a simple path to growth.
 
-From here on out, we’ll work with you to refine your offer, build and launch ads and funnels, set up the right automations, and optimize everything based on real data. You’re not just hiring a service, you’re gaining a long-term growth partner.
+From here on out, we’ll work with you to refine your offer, build and launch ads and funnels, set up the right automations, and optimize everything based on real data. You’re not just hiring a service — you’re gaining a long-term growth partner.
 
-- - - - -
+⸻
 
-**I’d Like to Introduce You to Your Team…**
+👥 **Meet Your Team**
 
 ${founder} – **Founder & Strategy Lead**  
 Oversees your growth strategy, offer positioning, and overall direction to ensure everything is built to scale.
 
 ${csms} – **Client Success Managers**  
-Your main point of contact. They’re here to answer questions, provide clarity, guide next steps, and keep you moving forward smoothly. They will also be handling your ad creation, funnel builds, automations, tracking, and ongoing optimization behind the scenes.
+Your main point of contact. They’re here to answer questions, provide clarity, guide next steps, and keep you moving forward smoothly.
 
 ${ops} – **Operations Manager**  
 Ensures onboarding, timelines, and internal coordination run seamlessly so nothing falls through the cracks.
 
-- - - - -
+**Creative & Tech Team**  
+Handles ad creation, funnel builds, automations, tracking, and ongoing optimization behind the scenes.
 
-**How We’ll Work Together**
+⸻
 
-This Discord is your direct line to the team. Ask questions anytime, share updates, and reach out whenever you need clarity, we’re here to support you at every step.
+🤝 **How We’ll Work Together**
 
-- - - - -
+This Discord is your direct line to the team. Ask questions anytime, share updates, and reach out whenever you need clarity — we’re here to support you at every step.
 
-**Next Step...**
+⸻
 
-Head to ${startHere} and complete your intake form so we can tailor your onboarding and hit the ground running.
+🚀 **Next Steps (Please Complete in Order)**
 
-We’re excited to grow with you. Welcome aboard!
+1️⃣ Invite any team members you’d like included in this workspace.  
+2️⃣ Join the Circle Group in ${curriculum} and watch all Pre-Onboarding videos.  
+3️⃣ Read your On-Boarding Email carefully — it outlines key expectations and what happens next.
+
+Once these are complete, we’ll take it from there and guide you through the rest.
+
+We’re excited to grow with you. Welcome aboard! 🚀
     `.trim();
 
     await teamChatChannel.send(msg);
